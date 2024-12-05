@@ -7,7 +7,7 @@ use crate::compact_formats::{
     BlockId, BlockRange, ChainSpec, CompactBlock, Empty, LightdInfo, PriceRequest, PriceResponse, RawTransaction,
     TransparentAddressBlockFilter, TreeState, TxFilter,
 };
-use crate::ServerCert;
+// use crate::ServerCert;
 use futures::stream::FuturesUnordered;
 use futures::StreamExt;
 use log::warn;
@@ -16,13 +16,16 @@ use tokio::sync::mpsc::{Sender, UnboundedReceiver};
 use tokio::sync::oneshot;
 use tokio::task::JoinHandle;
 
-use tonic::transport::{Certificate, ClientTlsConfig};
+// use tonic::transport::{Certificate, ClientTlsConfig};
+use tonic::transport::ClientTlsConfig;
 use tonic::{
     transport::{Channel, Error},
     Request,
 };
 use zcash_primitives::consensus::{self, BlockHeight, BranchId};
 use zcash_primitives::transaction::{Transaction, TxId};
+
+use std::time::Duration;
 
 #[derive(Clone)]
 pub struct GrpcConnector {
@@ -40,18 +43,19 @@ impl GrpcConnector {
             Channel::builder(self.uri.clone()).connect().await?
         } else {
             //println!("https");
-            let mut tls = ClientTlsConfig::new().domain_name(self.uri.host().unwrap());
+            // let mut tls = ClientTlsConfig::new().domain_name(self.uri.host().unwrap());
 
-            let server_cert = ServerCert::get("fullchain.pem").unwrap().data;
-            if server_cert.len() > 0 {
-                let server_root_ca_cert = Certificate::from_pem(server_cert);
-                tls = tls.ca_certificate(server_root_ca_cert);
-            }
+            // let server_cert = ServerCert::get("fullchain.pem").unwrap().data;
+            // if server_cert.len() > 0 {
+            //     let server_root_ca_cert = Certificate::from_pem(server_cert);
+            //     tls = tls.ca_certificate(server_root_ca_cert);
+            // }
+            let tls = ClientTlsConfig::new();
 
             Channel::builder(self.uri.clone())
                 .tls_config(tls)?
-                // .timeout(Duration::from_secs(10))
-                // .connect_timeout(Duration::from_secs(10))
+                .timeout(Duration::from_secs(10))                
+                .connect_timeout(Duration::from_secs(10))                
                 .connect()
                 .await?
         };

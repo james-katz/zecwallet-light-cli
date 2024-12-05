@@ -1407,7 +1407,8 @@ impl<P: consensus::Parameters + Send + Sync + 'static> LightWallet<P> {
         // Select notes to cover the target value
         println!("{}: Selecting notes", now() - start_time);
 
-        let target_amount = (Amount::from_u64(total_value).unwrap() + DEFAULT_FEE).unwrap();
+        // let target_amount = (Amount::from_u64(total_value).unwrap() + DEFAULT_FEE).unwrap();
+        let target_amount = Amount::from_u64(total_value).unwrap();
         let target_height = match self.get_target_height().await {
             Some(h) => BlockHeight::from_u32(h),
             None => return Err("No blocks in wallet to target, please sync first".to_string()),
@@ -1456,6 +1457,15 @@ impl<P: consensus::Parameters + Send + Sync + 'static> LightWallet<P> {
             utxos.len()
         );
 
+        // Naive zip317 implementation        
+        let total_inputs = o_notes.len() + s_notes.len() + utxos.len();
+        let custom_fee = Amount::from_u64(
+            u64::from(DEFAULT_FEE) * (tos.len() + 1) as u64 + (5000 * total_inputs as u64)
+        ).unwrap();
+
+        println!("Custom fee (naive zip317): {} zats", u64::from(custom_fee));
+        builder.set_custom_fee(custom_fee);
+
         let mut change = 0u64;
 
         // Add all tinputs
@@ -1492,7 +1502,7 @@ impl<P: consensus::Parameters + Send + Sync + 'static> LightWallet<P> {
                 let e = format!("Error adding orchard note: {:?}", e);
                 error!("{}", e);
                 return Err(e);
-            } else {
+            } else {                
                 change += selected.note.value().inner();
             }
         }
@@ -1526,6 +1536,10 @@ impl<P: consensus::Parameters + Send + Sync + 'static> LightWallet<P> {
 
         let mut total_z_recepients = 0u32;
         let mut total_o_recepients = 0u32;
+
+        let total_recepients = recepients.len();
+        let split_fee = Amount::from_u64(u64::from(custom_fee) / total_recepients as u64).unwrap();
+
         for (to, value, memo) in recepients {
             // Compute memo if it exists
             let encoded_memo = match memo {
@@ -1542,26 +1556,27 @@ impl<P: consensus::Parameters + Send + Sync + 'static> LightWallet<P> {
                     }
                 }
             };
-
+            
             println!("{}: Adding output", now() - start_time);
+            let value_minus_fee = (value - split_fee).unwrap();
 
             if let Err(e) = match to {
                 address::RecipientAddress::Unified(to) => {
                     // TODO(orchard): Allow using the sapling or transparent parts of this unified address too.
-                    let orchard_address = to.orchard().unwrap().clone();
+                    let orchard_address = to.orchard().ok_or("Unrecognized UA, please a Sapling Address instead.")?.clone();
                     total_o_recepients += 1;
                     change -= u64::from(value);
 
-                    builder.add_orchard_output(Some(o_ovk.clone()), orchard_address, value.into(), encoded_memo)
+                    builder.add_orchard_output(Some(o_ovk.clone()), orchard_address, value_minus_fee.into(), encoded_memo)
                 }
                 address::RecipientAddress::Shielded(to) => {
                     total_z_recepients += 1;
                     change -= u64::from(value);
-                    builder.add_sapling_output(Some(s_ovk), to.clone(), value, encoded_memo)
+                    builder.add_sapling_output(Some(s_ovk), to.clone(), value_minus_fee, encoded_memo)
                 }
                 address::RecipientAddress::Transparent(to) => {
                     change -= u64::from(value);
-                    builder.add_transparent_output(&to, value)
+                    builder.add_transparent_output(&to, value_minus_fee)
                 }
             } {
                 let e = format!("Error adding output: {:?}", e);
@@ -1573,7 +1588,11 @@ impl<P: consensus::Parameters + Send + Sync + 'static> LightWallet<P> {
         // Change
         // If we're sending only to orchard addresses (or orchard + transparent addresses) send the change to
         // our orchard address.
-        change -= u64::from(DEFAULT_FEE);
+        // Note by James Katz:
+        // Since we're not selecting amount + fee, we shouldn't deduce the fee from the change
+        // change is now handled by deducing the fee from sent amount
+        // change -= u64::from(DEFAULT_FEE);
+        println!("Change: {}", change);
         if change > 0 {
             // Send the change to orchard if there are no sapling outputs and at least one orchard note
             // was selected. This means for t->t transactions, change will go to sapling.
